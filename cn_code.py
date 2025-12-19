@@ -45,19 +45,17 @@ class CongestionDataset(Dataset):
     def __getitem__(self, idx):
         name = self.files[idx]
 
-        x = np.load(os.path.join(self.feature_dir, name))   # (H,W,C)
-        y = np.load(os.path.join(self.label_dir, name))     # (H,W) or (H,W,1)
+        x = np.load(os.path.join(self.feature_dir, name))   
+        y = np.load(os.path.join(self.label_dir, name))     
 
-        # per‑sample min–max
         x = (x - x.min()) / (x.max() - x.min() + 1e-6)
-        # log transform for congestion
         y = np.log1p(y)
 
         if y.ndim == 3:
             y = y.squeeze(-1)
 
-        x = torch.from_numpy(x).float().permute(2, 0, 1)   # C,H,W
-        y = torch.from_numpy(y).float()                    # H,W
+        x = torch.from_numpy(x).float().permute(2, 0, 1)   
+        y = torch.from_numpy(y).float()                    
 
         if self.train:
             x, y = random_geom_transform(x, y)
@@ -83,30 +81,26 @@ class CongestionUNet(nn.Module):
     def __init__(self, in_ch):
         super().__init__()
 
-        # encoder (slightly smaller for speed)
         self.enc1 = DoubleConv(in_ch, 32)
         self.pool1 = nn.MaxPool2d(2)
         self.enc2 = DoubleConv(32, 64)
         self.pool2 = nn.MaxPool2d(2)
         self.enc3 = DoubleConv(64, 128)
 
-        # decoder
         self.up2 = nn.ConvTranspose2d(128, 64, 2, stride=2)
         self.dec2 = DoubleConv(64 + 64, 64)
         self.up1 = nn.ConvTranspose2d(64, 32, 2, stride=2)
         self.dec1 = DoubleConv(32 + 32, 32)
 
-        # shared high‑res features
         self.out_feat = nn.Conv2d(32, 32, 3, padding=1)
 
-        # heads
         self.reg_head = nn.Conv2d(32, 1, 1)
         self.cls_head = nn.Conv2d(32, 1, 1)
 
     def forward(self, x):
-        x1 = self.enc1(x)               # 32, H, W
-        x2 = self.enc2(self.pool1(x1))  # 64, H/2, W/2
-        x3 = self.enc3(self.pool2(x2))  # 128, H/4, W/4
+        x1 = self.enc1(x)               
+        x2 = self.enc2(self.pool1(x1)) 
+        x3 = self.enc3(self.pool2(x2)) 
 
         d2 = self.up2(x3)
         d2 = torch.cat([d2, x2], dim=1)
@@ -221,9 +215,6 @@ def train(model, loader, val_loader, epochs=40, λ_cls=1.0):
         model.to(device)
 
 
-# =====================================================
-# Evaluation
-# =====================================================
 @torch.no_grad()
 def evaluate(model, loader, silent=False):
     model.eval()
@@ -257,9 +248,6 @@ def evaluate(model, loader, silent=False):
     return m_F1
 
 
-# =====================================================
-# Visualization
-# =====================================================
 @torch.no_grad()
 def visualize(model, dataset, idx=0):
     model.eval()
@@ -279,25 +267,17 @@ def visualize(model, dataset, idx=0):
     plt.colorbar()
     plt.show()
 
-
-# =====================================================
-# Main (20% subset + aug)
-# =====================================================
 if __name__ == "__main__":
     FEATURE_DIR = r"D:\CircuitNet_processed\congestion\feature"
     LABEL_DIR   = r"D:\CircuitNet_processed\congestion\label"
 
-    # full index list
     all_files = sorted(os.listdir(FEATURE_DIR))
     n_total = len(all_files)
 
-    # fixed 20% subset
     random.seed(42)
     subset_size = int(0.1 * n_total)
     subset_indices = sorted(random.sample(range(n_total), subset_size))
 
-    # build train/val datasets from subset
-    # note: dataset needs to know whether it's train for augmentation
     full_train_ds = CongestionDataset(FEATURE_DIR, LABEL_DIR, train=True)
     full_val_ds   = CongestionDataset(FEATURE_DIR, LABEL_DIR, train=False)
 
@@ -308,7 +288,6 @@ if __name__ == "__main__":
     val_len   = len(subset_train) - train_len
     train_set, val_set = random_split(subset_train, [train_len, val_len])
 
-    # validation set for evaluation uses non‑augmented version
     val_eval_set = val_set
 
     train_loader = DataLoader(
@@ -326,8 +305,6 @@ if __name__ == "__main__":
         pin_memory=True,
         num_workers=0
     )
-
-    # infer channel count
     tmp_ds = CongestionDataset(FEATURE_DIR, LABEL_DIR, train=False)
     in_ch = tmp_ds[0][0].shape[0]
     model = CongestionUNet(in_ch).to(device)
@@ -335,3 +312,4 @@ if __name__ == "__main__":
     train(model, train_loader, val_loader, epochs=40, λ_cls=1.0)
     evaluate(model, val_loader)
     visualize(model, tmp_ds, idx=subset_indices[0])
+
