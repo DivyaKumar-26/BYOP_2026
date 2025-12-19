@@ -48,14 +48,14 @@ class CongestionDataset(Dataset):
     def __getitem__(self, idx):
         name = self.files[idx]
 
-        x = np.load(os.path.join(self.feature_dir, name))   # H,W,C
-        y = np.load(os.path.join(self.label_dir, name))     # H,W,1 or H,W
+        x = np.load(os.path.join(self.feature_dir, name))   
+        y = np.load(os.path.join(self.label_dir, name))     
 
         x = normalize(x)
         y = normalize(y)
 
-        x = torch.tensor(x, dtype=torch.float).permute(2, 0, 1)  # C,H,W
-        y = torch.tensor(y, dtype=torch.float).squeeze()         # H,W
+        x = torch.tensor(x, dtype=torch.float).permute(2, 0, 1)  
+        y = torch.tensor(y, dtype=torch.float).squeeze()         
 
         return x, y
 
@@ -214,3 +214,4 @@ if __name__ == "__main__":
     train(model, train_loader)
     evaluate(model, val_loader)
     visualize(model, val_set)
+
