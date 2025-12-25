@@ -15,9 +15,7 @@ def normalize(x, eps=1e-6):
     return (x - x.min()) / (x.max() - x.min() + eps)
 
 def hotspot_metrics(pred, gt, percentile=0.99):
-    """
-    Binary hotspot evaluation
-    """
+
     gt_thresh = torch.quantile(gt[gt > 0], percentile)
     pred_thresh = torch.quantile(pred, percentile)
 
@@ -214,4 +212,5 @@ if __name__ == "__main__":
     train(model, train_loader)
     evaluate(model, val_loader)
     visualize(model, val_set)
+
 
