@@ -1,6 +1,3 @@
-# =====================================================
-# Environment
-# =====================================================
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -15,15 +12,9 @@ from torch_geometric.data import Data, Dataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import SAGEConv
 
-# =====================================================
-# Device
-# =====================================================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 print("Using device:", device)
 
-# =====================================================
-# Multi-scale grid graph
-# =====================================================
 def build_grid_edges(H, W, long_range=16):
     edges = []
 
@@ -56,9 +47,7 @@ def build_grid_edges(H, W, long_range=16):
 
     return torch.tensor(edges, dtype=torch.long).t()
 
-# =====================================================
-# Dataset
-# =====================================================
+
 class CongestionGraphDataset(Dataset):
     def __init__(self, feature_dir, label_dir):
         super().__init__()
@@ -76,8 +65,8 @@ class CongestionGraphDataset(Dataset):
     def get(self, idx):
         name = self.files[idx]
 
-        x = np.load(os.path.join(self.feature_dir, name))  # H,W,C
-        y = np.load(os.path.join(self.label_dir, name))    # H,W,1
+        x = np.load(os.path.join(self.feature_dir, name))  
+        y = np.load(os.path.join(self.label_dir, name))   
 
         x = (x - x.min()) / (x.max() - x.min() + 1e-6)
         y = np.log1p(y.squeeze())
@@ -87,9 +76,7 @@ class CongestionGraphDataset(Dataset):
 
         return Data(x=x, y=y, edge_index=self.edge_index)
 
-# =====================================================
-# GNN (Residual GraphSAGE)
-# =====================================================
+
 class CongestionGNN(nn.Module):
     def __init__(self, in_dim):
         super().__init__()
@@ -109,9 +96,7 @@ class CongestionGNN(nn.Module):
 
         return self.regressor(h3).squeeze()
 
-# =====================================================
-# Losses
-# =====================================================
+
 def weighted_huber(pred, gt, p=0.995, w=50.0, delta=0.01):
     mask = gt > 0
     thresh = torch.quantile(gt[mask], p) if mask.any() else gt.max()
@@ -136,18 +121,14 @@ def hotspot_loss(pred, gt, k=0.01):
 
     return F.binary_cross_entropy_with_logits(pred, mask)
 
-# =====================================================
-# Metrics
-# =====================================================
+
 def topk_overlap(pred, gt, k=0.01):
     n = max(1, int(pred.numel() * k))
     p_idx = torch.topk(pred, n).indices
     g_idx = torch.topk(gt, n).indices
     return len(set(p_idx.tolist()) & set(g_idx.tolist())) / n
 
-# =====================================================
-# Training (STABILIZED)
-# =====================================================
+
 def train(model, loader, epochs=30):
     opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
 
@@ -155,7 +136,6 @@ def train(model, loader, epochs=30):
         model.train()
         loss_sum = 0
 
-        # ---- FIXED curriculum ----
         if epoch < 5:
             peak_w = 50
         elif epoch < 10:
@@ -179,9 +159,7 @@ def train(model, loader, epochs=30):
 
         print(f"Epoch {epoch:02d} | Loss {loss_sum / len(loader):.4f}")
 
-# =====================================================
-# Evaluation
-# =====================================================
+
 @torch.no_grad()
 def evaluate(model, loader):
     model.eval()
@@ -198,9 +176,6 @@ def evaluate(model, loader):
     print(f"Top-1% overlap : {np.mean(o1):.3f}")
     print(f"Top-5% overlap : {np.mean(o5):.3f}")
 
-# =====================================================
-# Visualization
-# =====================================================
 @torch.no_grad()
 def visualize(model, dataset, idx=0):
     model.eval()
@@ -229,9 +204,6 @@ def visualize(model, dataset, idx=0):
     plt.tight_layout()
     plt.show()
 
-# =====================================================
-# Main
-# =====================================================
 if __name__ == "__main__":
 
     FEATURE_DIR = r"D:\CircuitNet_processed\congestion\feature"
@@ -254,3 +226,4 @@ if __name__ == "__main__":
     train(model, train_loader, epochs=30)
     evaluate(model, val_loader)
     visualize(model, val_set, idx=0)
+
