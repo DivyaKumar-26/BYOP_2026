@@ -1,6 +1,3 @@
-# =====================================================
-# Environment setup
-# =====================================================
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -15,12 +12,7 @@ from torch_geometric.data import Data, Dataset
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import SAGEConv
 
-# =====================================================
-# Device
-# =====================================================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
-
+device = torch.device("cuda")
 
 def build_grid_edges(H, W):
     edges = []
@@ -39,9 +31,7 @@ def build_grid_edges(H, W):
 
     return torch.tensor(edges, dtype=torch.long).t()
 
-# =====================================================
-# Dataset
-# =====================================================
+
 class CongestionGraphDataset(Dataset):
     def __init__(self, feature_dir, label_dir):
         super().__init__()
@@ -59,8 +49,8 @@ class CongestionGraphDataset(Dataset):
     def get(self, idx):
         name = self.files[idx]
 
-        x = np.load(os.path.join(self.feature_dir, name))  # H,W,C
-        y = np.load(os.path.join(self.label_dir, name))    # H,W,1
+        x = np.load(os.path.join(self.feature_dir, name)) 
+        y = np.load(os.path.join(self.label_dir, name))    
 
         # normalization
         x = (x - x.min()) / (x.max() - x.min() + 1e-6)
@@ -71,9 +61,7 @@ class CongestionGraphDataset(Dataset):
 
         return Data(x=x, y=y, edge_index=self.edge_index)
 
-# =====================================================
-# GNN model
-# =====================================================
+
 class CongestionGNN(nn.Module):
     def __init__(self, in_dim):
         super().__init__()
@@ -93,9 +81,7 @@ class CongestionGNN(nn.Module):
 
         return self.regressor(x).squeeze()
 
-# =====================================================
-# Loss & Metrics
-# =====================================================
+
 def weighted_huber(pred, gt, p=0.99, w=20.0, delta=0.01):
     mask = gt > 0
     thresh = torch.quantile(gt[mask], p) if mask.any() else gt.max()
@@ -117,9 +103,7 @@ def topk_overlap(pred, gt, k=0.01):
     g_idx = torch.topk(gt, n).indices
     return len(set(p_idx.tolist()) & set(g_idx.tolist())) / n
 
-# =====================================================
-# Training
-# =====================================================
+
 def train(model, loader, epochs=100):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
@@ -140,9 +124,7 @@ def train(model, loader, epochs=100):
 
         print(f"Epoch {epoch:02d} | Loss {loss_sum / len(loader):.4f}")
 
-# =====================================================
-# Evaluation
-# =====================================================
+
 @torch.no_grad()
 def evaluate(model, loader):
     model.eval()
@@ -264,3 +246,4 @@ if __name__ == "__main__":
                 p = model(d).view(256, 256).cpu().numpy()
                 g = d.y.view(256, 256).cpu().numpy()
                 visualize_topk_overlap(p, g)
+
