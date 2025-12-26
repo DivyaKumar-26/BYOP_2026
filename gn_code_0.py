@@ -1,5 +1,5 @@
 # =====================================================
-# Environment
+# Environment setup
 # =====================================================
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -21,10 +21,8 @@ from torch_geometric.nn import SAGEConv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
-# =====================================================
-# Multi-scale grid graph
-# =====================================================
-def build_grid_edges(H, W, long_range=16):
+
+def build_grid_edges(H, W):
     edges = []
 
     def node(i, j):
@@ -32,27 +30,12 @@ def build_grid_edges(H, W, long_range=16):
 
     for i in range(H):
         for j in range(W):
-            # 4-neighborhood
-            for di, dj in [(1,0),(0,1)]:
-                ni, nj = i+di, j+dj
-                if ni < H and nj < W:
-                    edges += [[node(i,j), node(ni,nj)],
-                              [node(ni,nj), node(i,j)]]
-
-            # diagonals
-            for di, dj in [(1,1),(1,-1)]:
-                ni, nj = i+di, j+dj
-                if ni < H and 0 <= nj < W:
-                    edges += [[node(i,j), node(ni,nj)],
-                              [node(ni,nj), node(i,j)]]
-
-            # long-range row/column
-            if i + long_range < H:
-                edges += [[node(i,j), node(i+long_range,j)],
-                          [node(i+long_range,j), node(i,j)]]
-            if j + long_range < W:
-                edges += [[node(i,j), node(i,j+long_range)],
-                          [node(i,j+long_range), node(i,j)]]
+            if i + 1 < H:
+                edges.append([node(i, j), node(i + 1, j)])
+                edges.append([node(i + 1, j), node(i, j)])
+            if j + 1 < W:
+                edges.append([node(i, j), node(i, j + 1)])
+                edges.append([node(i, j + 1), node(i, j)])
 
     return torch.tensor(edges, dtype=torch.long).t()
 
@@ -79,6 +62,7 @@ class CongestionGraphDataset(Dataset):
         x = np.load(os.path.join(self.feature_dir, name))  # H,W,C
         y = np.load(os.path.join(self.label_dir, name))    # H,W,1
 
+        # normalization
         x = (x - x.min()) / (x.max() - x.min() + 1e-6)
         y = np.log1p(y.squeeze())
 
@@ -88,7 +72,7 @@ class CongestionGraphDataset(Dataset):
         return Data(x=x, y=y, edge_index=self.edge_index)
 
 # =====================================================
-# GNN (Residual GraphSAGE)
+# GNN model
 # =====================================================
 class CongestionGNN(nn.Module):
     def __init__(self, in_dim):
@@ -103,16 +87,16 @@ class CongestionGNN(nn.Module):
     def forward(self, data):
         x, edge_index = data.x, data.edge_index
 
-        h1 = F.relu(self.conv1(x, edge_index))
-        h2 = F.relu(self.conv2(h1, edge_index)) + h1
-        h3 = F.relu(self.conv3(h2, edge_index))
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = F.relu(self.conv3(x, edge_index))
 
-        return self.regressor(h3).squeeze()
+        return self.regressor(x).squeeze()
 
 # =====================================================
-# Losses
+# Loss & Metrics
 # =====================================================
-def weighted_huber(pred, gt, p=0.995, w=50.0, delta=0.01):
+def weighted_huber(pred, gt, p=0.99, w=20.0, delta=0.01):
     mask = gt > 0
     thresh = torch.quantile(gt[mask], p) if mask.any() else gt.max()
 
@@ -127,18 +111,6 @@ def weighted_huber(pred, gt, p=0.995, w=50.0, delta=0.01):
     )
     return (weights * huber).mean()
 
-def hotspot_loss(pred, gt, k=0.01):
-    n = max(1, int(gt.numel() * k))
-    idx = torch.topk(gt, n).indices
-
-    mask = torch.zeros_like(gt)
-    mask[idx] = 1.0
-
-    return F.binary_cross_entropy_with_logits(pred, mask)
-
-# =====================================================
-# Metrics
-# =====================================================
 def topk_overlap(pred, gt, k=0.01):
     n = max(1, int(pred.numel() * k))
     p_idx = torch.topk(pred, n).indices
@@ -146,32 +118,21 @@ def topk_overlap(pred, gt, k=0.01):
     return len(set(p_idx.tolist()) & set(g_idx.tolist())) / n
 
 # =====================================================
-# Training (STABILIZED)
+# Training
 # =====================================================
-def train(model, loader, epochs=30):
-    opt = torch.optim.AdamW(model.parameters(), lr=5e-4)
+def train(model, loader, epochs=100):
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
     for epoch in range(epochs):
         model.train()
         loss_sum = 0
-
-        # ---- FIXED curriculum ----
-        if epoch < 5:
-            peak_w = 50
-        elif epoch < 10:
-            peak_w = 80
-        else:
-            peak_w = 100
 
         for data in loader:
             data = data.to(device)
             opt.zero_grad()
 
             pred = model(data)
-            loss = (
-                weighted_huber(pred, data.y, w=peak_w)
-                + 0.05 * hotspot_loss(pred, data.y)
-            )
+            loss = weighted_huber(pred, data.y)
 
             loss.backward()
             opt.step()
@@ -194,39 +155,71 @@ def evaluate(model, loader):
         o1.append(topk_overlap(pred, data.y, 0.01))
         o5.append(topk_overlap(pred, data.y, 0.05))
 
-    print("\n=== Final Evaluation ===")
+    print("\n=== GNN Evaluation ===")
     print(f"Top-1% overlap : {np.mean(o1):.3f}")
     print(f"Top-5% overlap : {np.mean(o5):.3f}")
 
 # =====================================================
-# Visualization
+# Visualization (OPTIONAL)
 # =====================================================
 @torch.no_grad()
-def visualize(model, dataset, idx=0):
+def visualize_prediction(model, dataset, idx=0):
     model.eval()
     data = dataset[idx].to(device)
     pred = model(data)
 
     H, W = 256, 256
-    gt = data.y.view(H, W).cpu().numpy()
-    pr = pred.view(H, W).cpu().numpy()
-    err = np.abs(gt - pr)
+    gt_map = data.y.view(H, W).cpu().numpy()
+    pred_map = pred.view(H, W).cpu().numpy()
+    err_map = np.abs(gt_map - pred_map)
 
-    plt.figure(figsize=(15,5))
+    plt.figure(figsize=(15, 5))
 
-    plt.subplot(1,3,1)
+    plt.subplot(1, 3, 1)
     plt.title("Ground Truth (log)")
-    plt.imshow(gt, cmap="hot"); plt.colorbar(); plt.axis("off")
+    plt.imshow(gt_map, cmap="hot")
+    plt.colorbar()
+    plt.axis("off")
 
-    plt.subplot(1,3,2)
+    plt.subplot(1, 3, 2)
     plt.title("Prediction")
-    plt.imshow(pr, cmap="hot"); plt.colorbar(); plt.axis("off")
+    plt.imshow(pred_map, cmap="hot")
+    plt.colorbar()
+    plt.axis("off")
 
-    plt.subplot(1,3,3)
+    plt.subplot(1, 3, 3)
     plt.title("Absolute Error")
-    plt.imshow(err, cmap="viridis"); plt.colorbar(); plt.axis("off")
+    plt.imshow(err_map, cmap="viridis")
+    plt.colorbar()
+    plt.axis("off")
 
     plt.tight_layout()
+    plt.show()
+
+def visualize_topk_overlap(pred_map, gt_map, k=0.01):
+    n = int(k * pred_map.size)
+
+    p_mask = np.zeros_like(pred_map)
+    g_mask = np.zeros_like(gt_map)
+
+    p_idx = np.unravel_index(np.argsort(pred_map.ravel())[-n:], pred_map.shape)
+    g_idx = np.unravel_index(np.argsort(gt_map.ravel())[-n:], gt_map.shape)
+
+    p_mask[p_idx] = 1
+    g_mask[g_idx] = 1
+
+    plt.figure(figsize=(10, 4))
+
+    plt.subplot(1, 2, 1)
+    plt.title("Predicted Top 1%")
+    plt.imshow(p_mask, cmap="gray")
+    plt.axis("off")
+
+    plt.subplot(1, 2, 2)
+    plt.title("GT Top 1%")
+    plt.imshow(g_mask, cmap="gray")
+    plt.axis("off")
+
     plt.show()
 
 # =====================================================
@@ -237,20 +230,37 @@ if __name__ == "__main__":
     FEATURE_DIR = r"D:\CircuitNet_processed\congestion\feature"
     LABEL_DIR   = r"D:\CircuitNet_processed\congestion\label"
 
+    # ---------- FLAGS ----------
+    USE_SUBSET = True          # train on 10%
+    VISUALIZE = True           # enable GT vs pred plots
+    VISUALIZE_TOPK = True      # enable top-k mask visualization
+    # --------------------------
+
     dataset = CongestionGraphDataset(FEATURE_DIR, LABEL_DIR)
 
-    subset = int(0.5*len(dataset))
-    dataset, _ = random_split(dataset, [subset, len(dataset)-subset])
+    if USE_SUBSET:
+        subset_len = int(len(dataset))
+        dataset, _ = random_split(dataset, [subset_len, len(dataset) - subset_len])
 
     train_len = int(0.8 * len(dataset))
     val_len = len(dataset) - train_len
     train_set, val_set = random_split(dataset, [train_len, val_len])
 
     train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=1)
+    val_loader   = DataLoader(val_set, batch_size=1)
 
-    model = CongestionGNN(dataset[0].x.shape[1]).to(device)
+    sample = dataset[0]
+    model = CongestionGNN(sample.x.shape[1]).to(device)
 
-    train(model, train_loader, epochs=30)
+    train(model, train_loader, epochs=100)
     evaluate(model, val_loader)
-    visualize(model, val_set, idx=0)
+
+    if VISUALIZE:
+        visualize_prediction(model, val_set, idx=0)
+
+        if VISUALIZE_TOPK:
+            with torch.no_grad():
+                d = val_set[0].to(device)
+                p = model(d).view(256, 256).cpu().numpy()
+                g = d.y.view(256, 256).cpu().numpy()
+                visualize_topk_overlap(p, g)
