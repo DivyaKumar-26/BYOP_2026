@@ -190,7 +190,7 @@ def evaluate_congestion(initial, processed):
     return metrics
 
 
-def process_map(map_path,visualize=True,alpha=1):
+def process_map(map_path,alpha,visualize=True):
 
     print("\nProcessing congestion map with normalized congestion map")
     congestion_map = map_loader(map_path)
@@ -209,4 +209,6 @@ def process_map(map_path,visualize=True,alpha=1):
     print("processing complete!!")
     return congestion_map,congestion_map_initial,metrics
 
-process_map(r"D:\training_set\congestion\label\19-RISCY-a-1-c2-u0.7-m3-p6-f0.npy",visualize=True,alpha=1)
+map_address=input("enter congestion map path :")
+
+process_map(map_address,alpha=1)
